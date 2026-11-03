@@ -32,6 +32,7 @@ import org.springframework.data.mapping.context.PersistentPropertyPathFactory.Ty
 import org.springframework.data.mapping.model.BasicPersistentEntity;
 import org.springframework.data.util.TypeInformation;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.util.ConcurrentLruCache;
 import org.springframework.util.StringUtils;
 
 /**
@@ -95,8 +96,28 @@ class PersistentPropertyPathFactoryUnitTests {
 		assertThatExceptionOfType(InvalidPersistentPropertyPath.class)//
 				.isThrownBy(() -> factory.from(PersonSample.class, "persons.firstname"));
 
-		Map<TypeAndPath, ?> propertyPaths = (Map<TypeAndPath, ?>) ReflectionTestUtils.getField(factory, "propertyPaths");
-		assertThat(propertyPaths).containsKey(TypeAndPath.of(TypeInformation.of(PersonSample.class), "persons.firstname"));
+		ConcurrentLruCache<TypeAndPath, ?> propertyPaths = (ConcurrentLruCache<TypeAndPath, ?>) ReflectionTestUtils.getField(factory, "propertyPaths");
+		assertThat(propertyPaths.contains(TypeAndPath.of(TypeInformation.of(PersonSample.class), "persons.firstname"))).isTrue();
+	}
+
+	@Test // GH-3493
+	@SuppressWarnings("unchecked")
+	void boundsCacheOfFailingPropertyPathLookups() {
+
+		for (var i = 0; i < 2_000; i++) {
+
+			var path = "persons.unknown" + i;
+
+			assertThatExceptionOfType(InvalidPersistentPropertyPath.class)//
+					.isThrownBy(() -> factory.from(PersonSample.class, path));
+		}
+
+		ConcurrentLruCache<TypeAndPath, ?> propertyPaths = (ConcurrentLruCache<TypeAndPath, ?>) ReflectionTestUtils.getField(factory, "propertyPaths");
+
+		assertThat(propertyPaths.size()).isLessThanOrEqualTo(512);
+		assertThat(propertyPaths.contains(TypeAndPath.of(TypeInformation.of(PersonSample.class), "persons.unknown0"))).isFalse();
+		assertThat(propertyPaths.contains(TypeAndPath.of(TypeInformation.of(PersonSample.class), "persons.unknown1999"))).isTrue();
+		assertThat(factory.from(PersonSample.class, "persons.name").toDotPath()).isEqualTo("persons.name");
 	}
 
 	@Test // DATACMNS-1275
